@@ -48,18 +48,18 @@ export default function Profile() {
 			) : (
 				<DropdownMenu>
 					<DropdownMenuTrigger>
-						<>
-							{data?.image_url ? (
+						<> 
+							{data?.avatar_url ? (
 								<Image
-									src={data.image_url || ""}
-									alt={data.display_name || ""}
+									src={data.avatar_url || ""}
+									alt={data.full_name || ""}
 									width={50}
 									height={50}
 									className=" rounded-full  animate-fade ring-2 cursor-pointer"
 								/>
 							) : (
 								<div className="h-[50px] w-[50px] flex items-center justify-center ring-2 rounded-full text-2xl font-bold cursor-pointer">
-									<h1>{data.email[0]}</h1>
+									<h1>{data.full_name}</h1>
 								</div>
 							)}
 						</>

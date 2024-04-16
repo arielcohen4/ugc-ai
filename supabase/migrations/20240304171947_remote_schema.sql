@@ -1,163 +1,145 @@
+/** 
+* USERS
+* Note: This table contains user data. Users should only be able to view and update their own data.
+*/
+create table users (
+  -- UUID from auth.users
+  id uuid references auth.users not null primary key,
+  full_name text,
+  avatar_url text,
+  -- The customer's billing address, stored in JSON format.
+  billing_address jsonb,
+  -- Stores your customer's payment instruments.
+  payment_method jsonb
+);
+alter table users enable row level security;
+create policy "Can view own user data." on users for select using (auth.uid() = id);
+create policy "Can update own user data." on users for update using (auth.uid() = id);
 
-SET statement_timeout = 0;
-SET lock_timeout = 0;
-SET idle_in_transaction_session_timeout = 0;
-SET client_encoding = 'UTF8';
-SET standard_conforming_strings = on;
-SELECT pg_catalog.set_config('search_path', '', false);
-SET check_function_bodies = false;
-SET xmloption = content;
-SET client_min_messages = warning;
-SET row_security = off;
-
-CREATE EXTENSION IF NOT EXISTS "pgsodium" WITH SCHEMA "pgsodium";
-
-CREATE EXTENSION IF NOT EXISTS "pg_graphql" WITH SCHEMA "graphql";
-
-CREATE EXTENSION IF NOT EXISTS "pg_stat_statements" WITH SCHEMA "extensions";
-
-CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA "extensions";
-
-CREATE EXTENSION IF NOT EXISTS "pgjwt" WITH SCHEMA "extensions";
-
-CREATE EXTENSION IF NOT EXISTS "supabase_vault" WITH SCHEMA "vault";
-
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";
-
-CREATE OR REPLACE FUNCTION "public"."create_user_on_signup"() RETURNS "trigger"
-    LANGUAGE "plpgsql" SECURITY DEFINER
-    AS $$begin
-    insert into public.profiles(id,email,display_name,image_url)
-    values(
-      new.id,
-      new.email,
-      COALESCE(new.raw_user_meta_data ->> 'user_name',new.raw_user_meta_data ->> 'name'),
-      new.raw_user_meta_data ->> 'avatar_url'
-    );
-    insert into public.subscription(email)
-    values(
-      new.email
-    );
-    return new;
-end;$$;
-
-ALTER FUNCTION "public"."create_user_on_signup"() OWNER TO "postgres";
-
-CREATE OR REPLACE FUNCTION "public"."is_sub_active"() RETURNS boolean
-    LANGUAGE "plpgsql"
-    AS $$declare
-  var_end_at date;
-
+/**
+* This trigger automatically creates a user entry when a new user signs up via Supabase Auth.
+*/ 
+create function public.handle_new_user() 
+returns trigger as $$
 begin
+  insert into public.users (id, full_name, avatar_url)
+  values (new.id, new.raw_user_meta_data->>'full_name', new.raw_user_meta_data->>'avatar_url');
+  return new;
+end;
+$$ language plpgsql security definer;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute procedure public.handle_new_user();
 
-  select end_at into var_end_at from public.subscription where email = auth.jwt() ->> 'email';
-
-  return var_end_at > CURRENT_DATE;
-
-end;$$;
-
-ALTER FUNCTION "public"."is_sub_active"() OWNER TO "postgres";
-
-SET default_tablespace = '';
-
-SET default_table_access_method = "heap";
-
-CREATE TABLE IF NOT EXISTS "public"."post" (
-    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
-    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
-    "text" "text"
+/**
+* CUSTOMERS
+* Note: this is a private table that contains a mapping of user IDs to Stripe customer IDs.
+*/
+create table customers (
+  -- UUID from auth.users
+  id uuid references auth.users not null primary key,
+  -- The user's customer ID in Stripe. User must not be able to update this.
+  stripe_customer_id text
 );
+alter table customers enable row level security;
+-- No policies as this is a private table that the user must not have access to.
 
-ALTER TABLE "public"."post" OWNER TO "postgres";
-
-CREATE TABLE IF NOT EXISTS "public"."profiles" (
-    "id" "uuid" NOT NULL,
-    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
-    "email" "text" NOT NULL,
-    "display_name" "text",
-    "image_url" "text"
+/** 
+* PRODUCTS
+* Note: products are created and managed in Stripe and synced to our DB via Stripe webhooks.
+*/
+create table products (
+  -- Product ID from Stripe, e.g. prod_1234.
+  id text primary key,
+  -- Whether the product is currently available for purchase.
+  active boolean,
+  -- The product's name, meant to be displayable to the customer. Whenever this product is sold via a subscription, name will show up on associated invoice line item descriptions.
+  name text,
+  -- The product's description, meant to be displayable to the customer. Use this field to optionally store a long form explanation of the product being sold for your own rendering purposes.
+  description text,
+  -- A URL of the product image in Stripe, meant to be displayable to the customer.
+  image text,
+  -- Set of key-value pairs, used to store additional information about the object in a structured format.
+  metadata jsonb
 );
+alter table products enable row level security;
+create policy "Allow public read-only access." on products for select using (true);
 
-ALTER TABLE "public"."profiles" OWNER TO "postgres";
-
-CREATE TABLE IF NOT EXISTS "public"."subscription" (
-    "email" "text" NOT NULL,
-    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
-    "customer_id" "text",
-    "subscription_id" "text",
-    "end_at" "date"
+/**
+* PRICES
+* Note: prices are created and managed in Stripe and synced to our DB via Stripe webhooks.
+*/
+create type pricing_type as enum ('one_time', 'recurring');
+create type pricing_plan_interval as enum ('day', 'week', 'month', 'year');
+create table prices (
+  -- Price ID from Stripe, e.g. price_1234.
+  id text primary key,
+  -- The ID of the prduct that this price belongs to.
+  product_id text references products, 
+  -- Whether the price can be used for new purchases.
+  active boolean,
+  -- A brief description of the price.
+  description text,
+  -- The unit amount as a positive integer in the smallest currency unit (e.g., 100 cents for US$1.00 or 100 for ¥100, a zero-decimal currency).
+  unit_amount bigint,
+  -- Three-letter ISO currency code, in lowercase.
+  currency text check (char_length(currency) = 3),
+  -- One of `one_time` or `recurring` depending on whether the price is for a one-time purchase or a recurring (subscription) purchase.
+  type pricing_type,
+  -- The frequency at which a subscription is billed. One of `day`, `week`, `month` or `year`.
+  interval pricing_plan_interval,
+  -- The number of intervals (specified in the `interval` attribute) between subscription billings. For example, `interval=month` and `interval_count=3` bills every 3 months.
+  interval_count integer,
+  -- Default number of trial days when subscribing a customer to this price using [`trial_from_plan=true`](https://stripe.com/docs/api#create_subscription-trial_from_plan).
+  trial_period_days integer,
+  -- Set of key-value pairs, used to store additional information about the object in a structured format.
+  metadata jsonb
 );
+alter table prices enable row level security;
+create policy "Allow public read-only access." on prices for select using (true);
 
-ALTER TABLE "public"."subscription" OWNER TO "postgres";
+/**
+* SUBSCRIPTIONS
+* Note: subscriptions are created and managed in Stripe and synced to our DB via Stripe webhooks.
+*/
+create type subscription_status as enum ('trialing', 'active', 'canceled', 'incomplete', 'incomplete_expired', 'past_due', 'unpaid', 'paused');
+create table subscriptions (
+  -- Subscription ID from Stripe, e.g. sub_1234.
+  id text primary key,
+  user_id uuid references auth.users not null,
+  -- The status of the subscription object, one of subscription_status type above.
+  status subscription_status,
+  -- Set of key-value pairs, used to store additional information about the object in a structured format.
+  metadata jsonb,
+  -- ID of the price that created this subscription.
+  price_id text references prices,
+  -- Quantity multiplied by the unit amount of the price creates the amount of the subscription. Can be used to charge multiple seats.
+  quantity integer,
+  -- If true the subscription has been canceled by the user and will be deleted at the end of the billing period.
+  cancel_at_period_end boolean,
+  -- Time at which the subscription was created.
+  created timestamp with time zone default timezone('utc'::text, now()) not null,
+  -- Start of the current period that the subscription has been invoiced for.
+  current_period_start timestamp with time zone default timezone('utc'::text, now()) not null,
+  -- End of the current period that the subscription has been invoiced for. At the end of this period, a new invoice will be created.
+  current_period_end timestamp with time zone default timezone('utc'::text, now()) not null,
+  -- If the subscription has ended, the timestamp of the date the subscription ended.
+  ended_at timestamp with time zone default timezone('utc'::text, now()),
+  -- A date in the future at which the subscription will automatically get canceled.
+  cancel_at timestamp with time zone default timezone('utc'::text, now()),
+  -- If the subscription has been canceled, the date of that cancellation. If the subscription was canceled with `cancel_at_period_end`, `canceled_at` will still reflect the date of the initial cancellation request, not the end of the subscription period when the subscription is automatically moved to a canceled state.
+  canceled_at timestamp with time zone default timezone('utc'::text, now()),
+  -- If the subscription has a trial, the beginning of that trial.
+  trial_start timestamp with time zone default timezone('utc'::text, now()),
+  -- If the subscription has a trial, the end of that trial.
+  trial_end timestamp with time zone default timezone('utc'::text, now())
+);
+alter table subscriptions enable row level security;
+create policy "Can only view own subs data." on subscriptions for select using (auth.uid() = user_id);
 
-ALTER TABLE ONLY "public"."post"
-    ADD CONSTRAINT "post_pkey" PRIMARY KEY ("id");
-
-ALTER TABLE ONLY "public"."profiles"
-    ADD CONSTRAINT "profiles_email_key" UNIQUE ("email");
-
-ALTER TABLE ONLY "public"."profiles"
-    ADD CONSTRAINT "profiles_pkey" PRIMARY KEY ("id", "email");
-
-ALTER TABLE ONLY "public"."subscription"
-    ADD CONSTRAINT "subscription_pkey" PRIMARY KEY ("email");
-
-ALTER TABLE ONLY "public"."profiles"
-    ADD CONSTRAINT "profiles_id_fkey" FOREIGN KEY ("id") REFERENCES "auth"."users"("id") ON UPDATE CASCADE ON DELETE CASCADE;
-
-ALTER TABLE ONLY "public"."subscription"
-    ADD CONSTRAINT "public_subscription_email_fkey" FOREIGN KEY ("email") REFERENCES "public"."profiles"("email") ON UPDATE CASCADE ON DELETE CASCADE;
-
-CREATE POLICY "Enable insert for authenticated users only" ON "public"."profiles" FOR SELECT TO "authenticated" USING (true);
-
-CREATE POLICY "Enable read access for all users" ON "public"."post" FOR SELECT TO "authenticated" USING ("public"."is_sub_active"());
-
-CREATE POLICY "Enable read for users based on email" ON "public"."subscription" FOR SELECT TO "authenticated" USING ((("auth"."jwt"() ->> 'email'::"text") = "email"));
-
-ALTER TABLE "public"."post" ENABLE ROW LEVEL SECURITY;
-
-ALTER TABLE "public"."profiles" ENABLE ROW LEVEL SECURITY;
-
-ALTER TABLE "public"."subscription" ENABLE ROW LEVEL SECURITY;
-
-GRANT USAGE ON SCHEMA "public" TO "postgres";
-GRANT USAGE ON SCHEMA "public" TO "anon";
-GRANT USAGE ON SCHEMA "public" TO "authenticated";
-GRANT USAGE ON SCHEMA "public" TO "service_role";
-
-GRANT ALL ON FUNCTION "public"."create_user_on_signup"() TO "anon";
-GRANT ALL ON FUNCTION "public"."create_user_on_signup"() TO "authenticated";
-GRANT ALL ON FUNCTION "public"."create_user_on_signup"() TO "service_role";
-
-GRANT ALL ON FUNCTION "public"."is_sub_active"() TO "anon";
-GRANT ALL ON FUNCTION "public"."is_sub_active"() TO "authenticated";
-GRANT ALL ON FUNCTION "public"."is_sub_active"() TO "service_role";
-
-GRANT ALL ON TABLE "public"."post" TO "anon";
-GRANT ALL ON TABLE "public"."post" TO "authenticated";
-GRANT ALL ON TABLE "public"."post" TO "service_role";
-
-GRANT ALL ON TABLE "public"."profiles" TO "anon";
-GRANT ALL ON TABLE "public"."profiles" TO "authenticated";
-GRANT ALL ON TABLE "public"."profiles" TO "service_role";
-
-GRANT ALL ON TABLE "public"."subscription" TO "anon";
-GRANT ALL ON TABLE "public"."subscription" TO "authenticated";
-GRANT ALL ON TABLE "public"."subscription" TO "service_role";
-
-ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES  TO "postgres";
-ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES  TO "anon";
-ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES  TO "authenticated";
-ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON SEQUENCES  TO "service_role";
-
-ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS  TO "postgres";
-ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS  TO "anon";
-ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS  TO "authenticated";
-ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON FUNCTIONS  TO "service_role";
-
-ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES  TO "postgres";
-ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES  TO "anon";
-ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES  TO "authenticated";
-ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES  TO "service_role";
-
-RESET ALL;
+/**
+ * REALTIME SUBSCRIPTIONS
+ * Only allow realtime listening on public tables.
+ */
+drop publication if exists supabase_realtime;
+create publication supabase_realtime for table products, prices;

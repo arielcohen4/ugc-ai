@@ -1,10 +1,10 @@
 import React from "react";
-import Balance from "./components/Balance";
+import Videos from "./components/Videos";
 
 export default function Page() {
 	return (
 		<div>
-			<Balance />
+			<Videos />
 		</div>
 	);
 }

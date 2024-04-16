@@ -11,44 +11,42 @@ export default function Price() {
 	const prices = [
 		{
 			title: "Hobby",
-			description: "Start your next side project",
+			description: "Load 25$ balance and get 10 free generations",
 			benefits: [
-				"Improved productivity",
-				"Enhanced performance",
-				"Cost savings",
+				"Approximately 2 UGC videos",
+				"10 Free Generations",
+				"24/7 support",
 				"Improved communication",
 				"Enhanced collaboration",
 			],
 			amount: 10,
-			priceId: "price_1OkLyMBjTkC65mKFFh3g34Js",
+			priceId: "price_1P5rgqGUKbrQ1WqShik6fqJY",
 		},
 		{
 			title: "Pro",
-			description:
-				"Lorem Ipsum is simply dummy text of the printing and typesetting industry",
+			description: "Load 50$ balance and get 25 free generations",
 			benefits: [
-				"Improved productivity",
-				"Enhanced performance",
-				"Cost savings",
+				"Approximately 5 UGC videos",
+				"25 Free Generations",
+				"24/7 support",
 				"Improved communication",
 				"Enhanced collaboration",
 			],
-			amount: 20,
-			priceId: "price_1OkLyeBjTkC65mKFrDgRUUuh",
+			amount: 50,
+			priceId: "price_1P5rjDGUKbrQ1WqSm8GFwtRp",
 		},
 		{
-			title: "Enterpise",
-			description:
-				"Lorem Ipsum is simply dummy text of the printing and typesetting industry",
+			title: "Master",
+			escription: "Load 100$ balance and get 45 free generations",
 			benefits: [
-				"Improved productivity",
-				"Enhanced performance",
-				"Cost savings",
+				"Approximately 10 UGC videos",
+				"45 Free Generations",
+				"24/7 support",
 				"Improved communication",
 				"Enhanced collaboration",
 			],
 			amount: 100,
-			priceId: "price_1OkLypBjTkC65mKFP6QPJHnF",
+			priceId: "price_1P5rkPGUKbrQ1WqSgW7KWOJi",
 		},
 	];
 	if (isLoading) {

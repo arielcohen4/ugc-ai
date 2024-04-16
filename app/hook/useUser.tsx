@@ -4,18 +4,12 @@ import { useQuery } from "@tanstack/react-query";
 import React from "react";
 
 const initUser = {
-	created_at: "",
-	display_name: "",
+	avatar_url: "",
+	full_name: "",
 	email: "",
 	id: "",
-	image_url: "",
-	subscription: {
-		created_at: "",
-		customer_id: "",
-		email: "",
-		end_at: "",
-		subscription_id: "",
-	},
+	payment_method: null,
+	balance: 0
 };
 
 export default function useUser() {
@@ -25,13 +19,14 @@ export default function useUser() {
 			const supabase = supabaseBrowser();
 			const { data } = await supabase.auth.getSession();
 			if (data.session?.user) {
-				// fetch user information profile
+				// fetch user information profil	e
 				const { data: user } = await supabase
-					.from("profiles")
-					.select("*,subscription(*)")
+					.from("users")
+					.select("*")
 					.eq("id", data.session.user.id)
 					.single();
 
+				console.log(user);
 				return user;
 			}
 			return initUser;
